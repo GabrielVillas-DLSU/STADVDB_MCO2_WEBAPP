@@ -32,5 +32,12 @@
         <input type="text" id="Genre" name="genre" required><br><br>
 
         <input type="submit" value="Update Movie">
+
+        <script src="script.js"></script>
+        <script>
+        loadUpdateForm();
+        document.querySelector("form").onsubmit = updateMovie;
+        </script>
+
 </body>
 </html>

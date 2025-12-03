@@ -9,10 +9,15 @@
     <button onclick="window.location.href='ViewMovies.html'">View Movies</button>
     <button onclick="window.location.href='ViewReports.html'">View Reports</button>
     <button onclick="window.location.href='index.html'">Back to Home</button> <br><br>
-    <form>
-        <input type="text" placeholder="Search a Movie">
-        <button type="submit">Search</button>
+    
+    <form onsubmit="searchMovies(event)">
+    <input id="searchBox" type="text" placeholder="Search a Movie">
+    <button type="submit">Search</button>
     </form>
-     
+
+    <div id="searchResults"></div>
+
+    <script src="script.js"></script>
+
 </body>
 </html>
