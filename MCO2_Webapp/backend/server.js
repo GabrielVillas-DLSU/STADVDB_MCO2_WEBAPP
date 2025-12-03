@@ -11,7 +11,7 @@ const mysql = require("mysql2/promise");
 
 const centralDB = mysql.createPool({
     host: "ccscloud.dlsu.edu.ph",
-    port: 60781,
+    port: 3306,
     user: "root",
     password: "",
     database: "imdb_title_basics"
@@ -19,7 +19,7 @@ const centralDB = mysql.createPool({
 
 const f1DB = mysql.createPool({
     host: "ccscloud.dlsu.edu.ph",
-    port: 60782,
+    port: 3306,
     user: "root",
     password: "",
     database: "imdb_title_f1"
@@ -27,7 +27,7 @@ const f1DB = mysql.createPool({
 
 const f2DB = mysql.createPool({
     host: "ccscloud.dlsu.edu.ph",
-    port: 60783,
+    port: 3306,
     user: "root",
     password: "",
     database: "imdb_title_f2"
