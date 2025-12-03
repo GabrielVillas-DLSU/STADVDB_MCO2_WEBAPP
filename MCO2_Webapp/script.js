@@ -1,5 +1,5 @@
 // Adjust according to your setup:
-const API = "http://ccscloud.dlsu.edu.ph:60181:3000"
+const API = "http://ccscloud.dlsu.edu.ph:60181/api"
 
 //--------------------------------------------------
 // GET ALL MOVIES

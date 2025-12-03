@@ -10,24 +10,24 @@ app.use(express.json());
 const mysql = require("mysql2/promise");
 
 const centralDB = mysql.createPool({
-    host: "ccscloud.dlsu.edu.ph",
-    port: 60781,
+    host: "10.2.14.81",
+    port: 3306,        
     user: "root",
     password: "",
     database: "imdb_title_basics"
 });
 
 const f1DB = mysql.createPool({
-    host: "ccscloud.dlsu.edu.ph",
-    port: 60782,
+    host: "10.2.14.82",
+    port: 3306,
     user: "root",
     password: "",
     database: "imdb_title_f1"
 });
 
 const f2DB = mysql.createPool({
-    host: "ccscloud.dlsu.edu.ph",
-    port: 60783,
+    host: "10.2.14.83",
+    port: 3306,
     user: "root",
     password: "",
     database: "imdb_title_f2"
