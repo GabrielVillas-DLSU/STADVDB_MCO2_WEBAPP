@@ -13,7 +13,7 @@ const centralDB = mysql.createPool({
     host: "ccscloud.dlsu.edu.ph",
     port: 60781,
     user: "root",
-    password: "Cr6Sq5RPcvZLubhjEAnF8tYX",
+    password: "",
     database: "imdb_title_basics"
 });
 
@@ -21,7 +21,7 @@ const f1DB = mysql.createPool({
     host: "ccscloud.dlsu.edu.ph",
     port: 60782,
     user: "root",
-    password: "Cr6Sq5RPcvZLubhjEAnF8tYX",
+    password: "",
     database: "imdb_title_f1"
 });
 
@@ -29,7 +29,7 @@ const f2DB = mysql.createPool({
     host: "ccscloud.dlsu.edu.ph",
     port: 60783,
     user: "root",
-    password: "Cr6Sq5RPcvZLubhjEAnF8tYX",
+    password: "",
     database: "imdb_title_f2"
 });
 
