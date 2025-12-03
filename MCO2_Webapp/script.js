@@ -1,6 +1,5 @@
 // Adjust according to your setup:
-const API = "http://ccscloud.dlsu.edu.ph:60181";   // if reverse-proxied
-// const API = "http://ccscloud.dlsu.edu.ph:60181:3000"; // if directly accessing Node.js
+const API = "http://ccscloud.dlsu.edu.ph:60181:3000"
 
 //--------------------------------------------------
 // GET ALL MOVIES
