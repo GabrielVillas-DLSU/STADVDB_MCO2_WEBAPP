@@ -1,58 +1,173 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Home Page</title>
+    <title>STADVDB MCO2 – Distributed DB Simulator</title>
+    <style>
+        body { font-family: Arial; padding: 20px; background:#f6f6f6; }
+        h1 { margin-bottom: 5px; }
+        button {
+            padding: 10px 20px; margin: 5px; cursor: pointer;
+            background:#444; color:white; border:none; border-radius:5px;
+        }
+        select {
+            padding: 8px; margin: 5px;
+        }
+        #logBox {
+            width: 100%; height: 300px; background:white; padding: 10px;
+            border:1px solid #aaa; overflow-y:scroll; margin-top:20px;
+        }
+    </style>
 </head>
-<link rel="stylesheet" type="text/css" href="index.css">
 <body>
-    <h1>STADVDB: MCO2  IMDB </h1>
-    <button onclick="window.location.href='ViewMovies.html'">View Movies</button>
-    <button onclick="window.location.href='SearchMovies.html'">Search Movies</button>
-    <button onclick="window.location.href='ViewReports.html'">View Reports</button>
-    <h2> Add a Movie  </h2>
-    <form id="addMovieForm">
-        <label for="title">Type :</label>
-        <input type="text" id="type" name="type" required><br><br>
 
-        <label for="title">Title:</label>
-        <input type="text" id="title" name="title" required><br><br>
-        
-        <label for="year">Year:</label>
-        <input type="number" id="year" name="year" required><br><br>
-        
-        <label for="director">Director:</label>
-        <input type="text" id="director" name="director" required><br><br>
-        
-        <label for="dire">For Adults</label>
-        <label> 
-            <input type = "radio" name = "isAdult" value="yes"> Yes 
-        </label>
-        <label>
-            <input type = "radio" name = "isAdult" value="no"> No
-        </label><br><br>
+<h1>STADVDB MCO2 — Distributed Database Web Application</h1>
+<p>Simulate concurrency, replication, failures & recovery across Node0, Node1, Node2</p>
 
-        <label for="director">Genre: </label>
-        <input type="text" id="Genre" name="genre" required><br><br>
+<hr>
 
-        <input type="submit" value="Add Movie">
-    </form>
+<h3>Isolation Level</h3>
+<select id="isolation">
+    <option value="READ UNCOMMITTED">READ UNCOMMITTED</option>
+    <option value="READ COMMITTED">READ COMMITTED</option>
+    <option value="REPEATABLE READ">REPEATABLE READ</option>
+    <option value="SERIALIZABLE">SERIALIZABLE</option>
+</select>
 
-   
+<hr>
 
-    
+<h3>🔵 CASE 1 — Concurrent Reads (Node0 + Node1 + Node2)</h3>
+<input id="readTconst" placeholder="Enter tconst (example: tt0000001)">
+<button onclick="handleConcurrentRead()">Test Case 1</button>
 
+<hr>
 
+<h3>🟡 CASE 2 — One Writer + Readers</h3>
+<input id="case2_tconst" placeholder="tconst">
+<input id="case2_title" placeholder="New Title">
+<button onclick="handleWriteRead()">Test Case 2</button>
 
+<hr>
 
+<h3>🔴 CASE 3 — Write/Write Conflict</h3>
+<input id="case3_tconst" placeholder="tconst">
+<input id="case3_title1" placeholder="Node0 new title">
+<input id="case3_title2" placeholder="Node1 new title">
+<button onclick="handleWriteWrite()">Test Case 3</button>
 
+<hr>
 
+<h3>⚠ FAILURE SIMULATION</h3>
+<button onclick="simulateCentralFailure()">Simulate Central Failure</button>
+<button onclick="simulateNode1Failure()">Simulate Node1 Failure</button>
 
+<hr>
 
+<h3>🔄 RECOVERY</h3>
+<button onclick="recover()">Replay Missed Writes</button>
 
+<hr>
 
+<h3>📜 System Log</h3>
+<div id="logBox"></div>
 
+<script>
+const API = "http://ccscloud.dlsu.edu.ph:60181";
 
+// append messages to UI log box
+function log(msg) {
+    const logBox = document.getElementById("logBox");
+    logBox.innerHTML += "<div>" + msg + "</div>";
+    logBox.scrollTop = logBox.scrollHeight;
+}
 
+// --------------------------------------------------
+// CASE 1 — Concurrent Reads
+// --------------------------------------------------
+async function handleConcurrentRead() {
+    const tconst = document.getElementById("readTconst").value;
+    const iso = document.getElementById("isolation").value;
 
+    let result = await fetch(`${API}/simulate/concurrent-read/${tconst}`);
+    let data = await result.json();
 
+    log("<b>[CASE 1]</b> Concurrent read for " + tconst);
+    log(JSON.stringify(data, null, 2));
+}
+
+// --------------------------------------------------
+// CASE 2 — Write + Read
+// --------------------------------------------------
+async function handleWriteRead() {
+    const tconst = document.getElementById("case2_tconst").value;
+    const newTitle = document.getElementById("case2_title").value;
+
+    let result = await fetch(`${API}/simulate/write-read`, {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ tconst, newTitle })
+    });
+
+    const data = await result.json();
+    log("<b>[CASE 2]</b> Write+Read for " + tconst);
+    log(JSON.stringify(data, null, 2));
+}
+
+// --------------------------------------------------
+// CASE 3 — Write/Write Conflict
+// --------------------------------------------------
+async function handleWriteWrite() {
+    const tconst = document.getElementById("case3_tconst").value;
+    const title1 = document.getElementById("case3_title1").value;
+    const title2 = document.getElementById("case3_title2").value;
+
+    log("<b>[CASE 3]</b> Write/Write conflict simulation starting...");
+
+    // simulate Node0 writer
+    fetch(`${API}/movies/update/${tconst}`, {
+        method:"PUT",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ primaryTitle:title1, startYear:2000 })
+    }).then(r=>r.json()).then(data=>{
+        log("Node0 Writer: " + JSON.stringify(data));
+    });
+
+    // simulate Node1 writer
+    fetch(`${API}/movies/update/${tconst}`, {
+        method:"PUT",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ primaryTitle:title2, startYear:2000 })
+    }).then(r=>r.json()).then(data=>{
+        log("Node1 Writer: " + JSON.stringify(data));
+    });
+}
+
+// --------------------------------------------------
+// FAILURE SIMULATION
+// --------------------------------------------------
+async function simulateCentralFailure() {
+    log("<b>Simulating CENTRAL failure</b>");
+    await fetch(`${API}/simulate/failure-central`, { method: "POST" });
+    log("Central failure logged");
+}
+
+async function simulateNode1Failure() {
+    log("<b>Simulating NODE1 failure</b>");
+    await fetch(`${API}/simulate/failure-node1`, { method: "POST" });
+    log("Node1 failure logged");
+}
+
+// --------------------------------------------------
+// RECOVERY
+// --------------------------------------------------
+async function recover() {
+    log("<b>Recovering... Replaying WAL</b>");
+    let res = await fetch(`${API}/simulate/recovery`, { method:"POST" });
+    let data = await res.json();
+    log(JSON.stringify(data));
+    log("Recovery complete.");
+}
+</script>
+
+</body>
 </html>
+
