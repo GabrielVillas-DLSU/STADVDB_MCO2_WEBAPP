@@ -1,11 +1,49 @@
-// Adjust according to your setup:
-const API = "http://ccscloud.dlsu.edu.ph:60181/api"
+//--------------------------------------------------
+// FAILOVER API ENDPOINTS
+//--------------------------------------------------
+const API_NODES = [
+    "http://ccscloud.dlsu.edu.ph:60181/api",   // Server0
+    "http://ccscloud.dlsu.edu.ph:60182/api",   // Server1
+    "http://ccscloud.dlsu.edu.ph:60183/api"    // Server2
+];
+
+let ACTIVE_API = null;
+
+//--------------------------------------------------
+// AUTO-DETECT WORKING NODE
+//--------------------------------------------------
+async function findWorkingNode() {
+    for (let api of API_NODES) {
+        try {
+            const res = await fetch(`${api}/health`);
+            if (res.ok) {
+                ACTIVE_API = api;
+                console.log("✅ Connected to node:", api);
+                return;
+            }
+        } catch (err) {
+            console.log("❌ Node offline:", api);
+        }
+    }
+
+    alert("❌ No database nodes are reachable!");
+}
+
+findWorkingNode();
+
+// Helper
+async function waitForAPI() {
+    while (!ACTIVE_API) {
+        await new Promise(r => setTimeout(r, 200));
+    }
+}
 
 //--------------------------------------------------
 // GET ALL MOVIES
 //--------------------------------------------------
 async function loadMovies() {
-    const res = await fetch(`${API}/movies`);
+    await waitForAPI();
+    const res = await fetch(`${ACTIVE_API}/movies`);
     const data = await res.json();
 
     let table = document.getElementById("movieTableBody");
@@ -35,6 +73,7 @@ async function loadMovies() {
 //--------------------------------------------------
 async function addMovie(event) {
     event.preventDefault();
+    await waitForAPI();
 
     const body = {
         tconst: "tt" + Math.floor(Math.random()*99999999),
@@ -46,13 +85,12 @@ async function addMovie(event) {
         genre: document.getElementById("Genre").value
     };
 
-    const res = await fetch(`${API}/movies`, {
+    await fetch(`${ACTIVE_API}/movies`, {
         method: "POST",
         headers: { "Content-Type":"application/json" },
         body: JSON.stringify(body)
     });
 
-    const result = await res.json();
     alert("Movie added!");
     window.location.href = "ViewMovies.html";
 }
@@ -61,15 +99,19 @@ async function addMovie(event) {
 // DELETE MOVIE
 //--------------------------------------------------
 async function deleteMovie(tconst) {
+    await waitForAPI();
     if (!confirm("Delete movie?")) return;
 
-    await fetch(`${API}/movies/${tconst}`, { method: "DELETE" });
+    await fetch(`${ACTIVE_API}/movies/${tconst}`, {
+        method: "DELETE"
+    });
+
     alert("Deleted!");
     loadMovies();
 }
 
 //--------------------------------------------------
-// ROUTING TO UPDATE PAGE
+// GO TO UPDATE PAGE
 //--------------------------------------------------
 function goUpdate(tconst) {
     localStorage.setItem("updateTconst", tconst);
@@ -77,13 +119,15 @@ function goUpdate(tconst) {
 }
 
 //--------------------------------------------------
-// LOAD MOVIE INTO UPDATE FORM
+// LOAD UPDATE FORM
 //--------------------------------------------------
 async function loadUpdateForm() {
+    await waitForAPI();
+
     const tconst = localStorage.getItem("updateTconst");
     if (!tconst) return;
 
-    const res = await fetch(`${API}/movies/search?q=${tconst}`);
+    const res = await fetch(`${ACTIVE_API}/movies/search?q=${tconst}`);
     const data = await res.json();
     const m = data[0];
 
@@ -93,15 +137,15 @@ async function loadUpdateForm() {
     document.getElementById("Updatedirector").value = m.director || "";
     document.getElementById("Genre").value = m.genres;
 
-    // radio buttons
     document.querySelector(`input[name=UpdateisAdult][value=${m.isAdult ? "yes" : "no"}]`).checked = true;
 }
 
 //--------------------------------------------------
-// SUBMIT UPDATE FORM
+// SUBMIT UPDATE
 //--------------------------------------------------
 async function updateMovie(event) {
     event.preventDefault();
+    await waitForAPI();
 
     const tconst = localStorage.getItem("updateTconst");
 
@@ -114,7 +158,7 @@ async function updateMovie(event) {
         genre: document.getElementById("Genre").value
     };
 
-    await fetch(`${API}/movies/${tconst}`, {
+    await fetch(`${ACTIVE_API}/movies/${tconst}`, {
         method: "PUT",
         headers: { "Content-Type":"application/json" },
         body: JSON.stringify(body)
@@ -125,13 +169,14 @@ async function updateMovie(event) {
 }
 
 //--------------------------------------------------
-// SEARCH MOVIES
+// SEARCH
 //--------------------------------------------------
 async function searchMovies(event) {
     event.preventDefault();
+    await waitForAPI();
 
     const q = document.getElementById("searchBox").value;
-    const res = await fetch(`${API}/movies/search?q=${q}`);
+    const res = await fetch(`${ACTIVE_API}/movies/search?q=${q}`);
     const data = await res.json();
 
     let results = document.getElementById("searchResults");
@@ -147,25 +192,27 @@ async function searchMovies(event) {
 }
 
 //--------------------------------------------------
-// REPORT: TOP 5 GENRES
+// REPORT: TOP GENRES
 //--------------------------------------------------
 async function loadTopGenres() {
-    const res = await fetch(`${API}/reports/top-genres`);
+    await waitForAPI();
+
+    const res = await fetch(`${ACTIVE_API}/reports/top-genres`);
     const data = await res.json();
 
     const list = document.getElementById("topGenres");
     list.innerHTML = "";
 
-    data.forEach(g => {
-        list.innerHTML += `<li>${g.genres}: ${g.count} titles</li>`;
-    });
+    data.forEach(g => list.innerHTML += `<li>${g.genres}: ${g.count}</li>`);
 }
 
 //--------------------------------------------------
-// REPORT: YEAR WITH MOST TITLES
+// REPORT: MOST TITLE YEAR
 //--------------------------------------------------
 async function loadMostTitlesYear() {
-    const res = await fetch(`${API}/reports/most-titles-year`);
+    await waitForAPI();
+
+    const res = await fetch(`${ACTIVE_API}/reports/most-titles-year`);
     const data = await res.json();
 
     document.getElementById("mostTitlesYear").innerText =
@@ -173,13 +220,14 @@ async function loadMostTitlesYear() {
 }
 
 //--------------------------------------------------
-// REPORT: ADULT vs NON-ADULT COUNT
+// REPORT: ADULT STATS
 //--------------------------------------------------
 async function loadAdultStats() {
-    const res = await fetch(`${API}/reports/adult-count`);
+    await waitForAPI();
+
+    const res = await fetch(`${ACTIVE_API}/reports/adult-count`);
     const data = await res.json();
 
     document.getElementById("adultCount").innerText =
-        `Adult: ${data.adultCount}   |   Non-Adult: ${data.nonAdultCount}`;
+        `Adult: ${data.adultCount} | Non-Adult: ${data.nonAdultCount}`;
 }
-
