@@ -1,26 +1,23 @@
 // =====================
-//  SERVER 2 - FRAGMENT NODE (> 2010)
+//  SERVER 0 - CENTRAL NODE
 // =====================
 const express = require("express");
 const app = express();
 const cors = require("cors");
-app.use(cors({
-    origin: "*",   // allow ALL servers to call each other
-    methods: ["GET", "POST", "PUT", "DELETE"]
-}));
+app.use(cors({ origin: "*", methods: ["GET", "POST", "PUT", "DELETE"] }));
 app.use(express.json());
 
 const mysql = require("mysql2/promise");
 
-// ===============
-// DATABASE POOLS
-// ===============
+// =============================
+// DATABASE CONNECTIONS
+// =============================
 const centralDB = mysql.createPool({
     host: "10.2.14.81",
     port: 3306,
     user: "root",
     password: "",
-    database: "imdb_title_basics"
+    database: "imdb_title_basics",
 });
 
 const f1DB = mysql.createPool({
@@ -28,171 +25,179 @@ const f1DB = mysql.createPool({
     port: 3306,
     user: "root",
     password: "",
-    database: "imdb_title_f1"
+    database: "imdb_title_f1",
 });
 
-const localDB = mysql.createPool({
+const f2DB = mysql.createPool({
     host: "10.2.14.83",
     port: 3306,
     user: "root",
     password: "",
-    database: "imdb_title_f2"
+    database: "imdb_title_f2",
 });
 
 const tableCentral = "dim_title";
 const tableF1 = "dim_title_f1";
-const tableLocal = "dim_title_f2";
+const tableF2 = "dim_title_f2";
 
-// =========================
-// FAILOVER READ QUERY
-// =========================
+// =====================================================
+// FAILOVER QUERY FOR READ OPERATIONS
+// =====================================================
 async function queryFailover(sql) {
     try {
         return await centralDB.query(sql);
-    } catch {
+    } catch (e1) {
         console.log("CENTRAL DOWN → switching to F1");
         try {
             return await f1DB.query(sql);
-        } catch {
-            console.log("F1 DOWN → using LOCAL F2");
-            return await localDB.query(sql);
+        } catch (e2) {
+            console.log("F1 DOWN → switching to F2");
+            return await f2DB.query(sql);
         }
     }
 }
 
-// =========================
-// REPLICATION + RECOVERY
-// =========================
+// =====================================================
+// WRITE REPLICATION + RECOVERY QUEUE
+// =====================================================
 let recoveryQueue = [];
 
 async function replicate(movie) {
     const values = [
-        movie.tconst, movie.titleType, movie.primaryTitle,
-        movie.isAdult, movie.startYear, movie.genres
+        movie.tconst,
+        movie.titleType,
+        movie.primaryTitle,
+        movie.originalTitle || null,
+        movie.isAdult,
+        movie.startYear,
+        movie.endYear || null,
+        movie.runtimeMinutes || null,
+        movie.genres,
     ];
 
-    // Insert to central
+    const colList = `(tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, endYear, runtimeMinutes, genres)`;
+
+    const sql = `REPLACE INTO ${tableCentral} ${colList} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+    // Try to write to CENTRAL
     try {
-        await centralDB.query(`
-            REPLACE INTO ${tableCentral}
-            (tconst, titleType, primaryTitle, isAdult, startYear, genres)
-            VALUES (?, ?, ?, ?, ?, ?)`, values);
-    } catch {
-        console.log("CENTRAL DOWN → queueing update for later");
-        recoveryQueue.push(movie);
+        await centralDB.query(sql, values);
+    } catch (err) {
+        console.log("CENTRAL DOWN → Queueing for recovery");
+        recoveryQueue.push({ sql, values });
     }
 
-    // Insert to fragment 2 (local)
-    await localDB.query(`
-        REPLACE INTO ${tableLocal}
-        (tconst, titleType, primaryTitle, isAdult, startYear, genres)
-        VALUES (?, ?, ?, ?, ?, ?)`, values);
+    // Insert into fragment
+    const fragmentTable = movie.startYear <= 2010 ? tableF1 : tableF2;
+    const fragDB = movie.startYear <= 2010 ? f1DB : f2DB;
 
-    // If the movie should also exist on fragment 1
-    if (movie.startYear <= 2010) {
-        await f1DB.query(`
-            REPLACE INTO ${tableF1}
-            (tconst, titleType, primaryTitle, isAdult, startYear, genres)
-            VALUES (?, ?, ?, ?, ?, ?)`, values);
-    }
+    await fragDB.query(
+        `REPLACE INTO ${fragmentTable} ${colList} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        values
+    );
 }
 
-// Recovery loop
+// Automatic CENTRAL recovery
 setInterval(async () => {
     if (recoveryQueue.length === 0) return;
+
     console.log("Attempting CENTRAL recovery…");
 
     try {
-        for (const movie of recoveryQueue) {
-            await centralDB.query(`
-                REPLACE INTO ${tableCentral}
-                (tconst, titleType, primaryTitle, isAdult, startYear, genres)
-                VALUES (?, ?, ?, ?, ?, ?)`, [
-                movie.tconst, movie.titleType, movie.primaryTitle,
-                movie.isAdult, movie.startYear, movie.genres
-            ]);
+        for (const task of recoveryQueue) {
+            await centralDB.query(task.sql, task.values);
         }
-        console.log("Recovery successful!");
+        console.log("CENTRAL RECOVERY SUCCESS");
         recoveryQueue = [];
     } catch {
-        console.log("Central still down… retrying later.");
+        console.log("CENTRAL still down… retrying later");
     }
 }, 5000);
 
-// =========================
+// =============================
 // API ROUTES
-// =========================
+// =============================
 
-app.get("/api/health", (req, res) => {
-    res.json({ status: "OK" });
-});
+app.get("/api/health", (req, res) => res.json({ status: "OK" }));
 
+// GET ALL MOVIES
 app.get("/api/movies", async (req, res) => {
     const [rows] = await queryFailover(`SELECT * FROM ${tableCentral} LIMIT 200`);
     res.json(rows);
 });
 
+// SEARCH
 app.get("/api/movies/search", async (req, res) => {
     const term = "%" + req.query.q + "%";
-    const [rows] = await queryFailover(`
-        SELECT * FROM ${tableCentral} 
-        WHERE primaryTitle LIKE '${term}' LIMIT 200`
+    const [rows] = await queryFailover(
+        `SELECT * FROM ${tableCentral} WHERE primaryTitle LIKE ? LIMIT 200`,
+        [term]
     );
     res.json(rows);
 });
 
+// ADD MOVIE
 app.post("/api/movies", async (req, res) => {
     await replicate(req.body);
-    res.json({ message: "Movie added (replicated)" });
+    res.json({ message: "Movie added and replicated" });
 });
 
+// UPDATE MOVIE
 app.put("/api/movies/:tconst", async (req, res) => {
     req.body.tconst = req.params.tconst;
     await replicate(req.body);
-    res.json({ message: "Movie updated (replicated)" });
+    res.json({ message: "Movie updated and replicated" });
 });
 
+// DELETE MOVIE
 app.delete("/api/movies/:tconst", async (req, res) => {
-    await centralDB.query(`DELETE FROM ${tableCentral} WHERE tconst=?`, [req.params.tconst]);
-    await f1DB.query(`DELETE FROM ${tableF1} WHERE tconst=?`, [req.params.tconst]);
-    await localDB.query(`DELETE FROM ${tableLocal} WHERE tconst=?`, [req.params.tconst]);
+    const id = req.params.tconst;
+
+    await centralDB.query(`DELETE FROM ${tableCentral} WHERE tconst=?`, [id]);
+    await f1DB.query(`DELETE FROM ${tableF1} WHERE tconst=?`, [id]);
+    await f2DB.query(`DELETE FROM ${tableF2} WHERE tconst=?`, [id]);
+
     res.json({ message: "Movie deleted across all nodes" });
 });
 
-// REPORTS
+// =============================
+// FIXED REPORT ROUTES (/api/...)
+// =============================
+
 app.get("/api/reports/top-genres", async (req, res) => {
     const [rows] = await queryFailover(`
-        SELECT genres, COUNT(*) AS cnt
+        SELECT genres, COUNT(*) AS count
         FROM ${tableCentral}
+        WHERE genres IS NOT NULL
         GROUP BY genres
-        ORDER BY cnt DESC
+        ORDER BY count DESC
         LIMIT 5
     `);
     res.json(rows);
 });
 
-app.get("/reports/most-titles-year", async (req, res) => {
+app.get("/api/reports/most-titles-year", async (req, res) => {
     const [rows] = await centralDB.query(`
         SELECT startYear, COUNT(*) AS count
         FROM ${tableCentral}
-        WHERE startYear IS NOT NULL
         GROUP BY startYear
         ORDER BY count DESC
-        LIMIT 1;
+        LIMIT 1
     `);
     res.json(rows[0]);
 });
 
-
-app.get("/reports/adult-count", async (req, res) => {
+app.get("/api/reports/adult-count", async (req, res) => {
     const [rows] = await centralDB.query(`
         SELECT 
             SUM(isAdult = 1) AS adultCount,
             SUM(isAdult = 0) AS nonAdultCount
-        FROM ${tableCentral};
+        FROM ${tableCentral}
     `);
     res.json(rows[0]);
 });
 
+// =============================
 // START SERVER
-app.listen(3000, () => console.log("NODE 2 backend running on port 3000"));
+// =============================
+app.listen(3000, () => console.log("CENTRAL backend running on port 3000"));
