@@ -1,5 +1,5 @@
 // =====================
-//  SERVER 0 - CENTRAL NODE
+//  SERVER 1 - FRAGMENT NODE (≤ 2010)
 // =====================
 const express = require("express");
 const app = express();
@@ -23,7 +23,7 @@ const centralDB = mysql.createPool({
     database: "imdb_title_basics"
 });
 
-const f1DB = mysql.createPool({
+const localDB = mysql.createPool({
     host: "10.2.14.82",
     port: 3306,
     user: "root",
@@ -40,7 +40,7 @@ const f2DB = mysql.createPool({
 });
 
 const tableCentral = "dim_title";
-const tableF1 = "dim_title_f1";
+const tableLocal = "dim_title_f1";
 const tableF2 = "dim_title_f2";
 
 // =========================
@@ -49,11 +49,11 @@ const tableF2 = "dim_title_f2";
 async function queryFailover(sql) {
     try {
         return await centralDB.query(sql);
-    } catch (e1) {
-        console.log("CENTRAL DOWN → switching to F1");
+    } catch {
+        console.log("CENTRAL DOWN → using LOCAL F1");
         try {
-            return await f1DB.query(sql);
-        } catch (e2) {
+            return await localDB.query(sql);
+        } catch {
             console.log("F1 DOWN → switching to F2");
             return await f2DB.query(sql);
         }
@@ -67,67 +67,64 @@ let recoveryQueue = [];
 
 async function replicate(movie) {
     const values = [
-        movie.tconst,
-        movie.titleType,
-        movie.primaryTitle,
-        movie.isAdult,
-        movie.startYear,
-        movie.genres
+        movie.tconst, movie.titleType, movie.primaryTitle,
+        movie.isAdult, movie.startYear, movie.genres
     ];
 
     const sqlCentral = `
-        REPLACE INTO ${tableCentral} 
+        REPLACE INTO ${tableCentral}
         (tconst, titleType, primaryTitle, isAdult, startYear, genres)
         VALUES (?, ?, ?, ?, ?, ?)
     `;
 
-    // Try central DB
+    // Attempt central write
     try {
         await centralDB.query(sqlCentral, values);
-    } catch (err) {
-        console.log("CENTRAL DOWN → queueing for recovery");
+    } catch {
+        console.log("CENTRAL DOWN → queueing update");
         recoveryQueue.push(movie);
     }
 
-    // Insert to correct fragment
-    if (movie.startYear <= 2010) {
-        await f1DB.query(`
-            REPLACE INTO ${tableF1} VALUES (?, ?, ?, ?, ?, ?)
-        `, values);
-    } else {
+    // Always write to its own local fragment
+    await localDB.query(`
+        REPLACE INTO ${tableLocal}
+        (tconst, titleType, primaryTitle, isAdult, startYear, genres)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `, values);
+
+    // If movie belongs to f2
+    if (movie.startYear > 2010) {
         await f2DB.query(`
-            REPLACE INTO ${tableF2} VALUES (?, ?, ?, ?, ?, ?)
+            REPLACE INTO ${tableF2}
+            (tconst, titleType, primaryTitle, isAdult, startYear, genres)
+            VALUES (?, ?, ?, ?, ?, ?)
         `, values);
     }
 }
 
-// Recovery process
+// Recovery loop
 setInterval(async () => {
     if (recoveryQueue.length === 0) return;
 
-    console.log("Attempting CENTRAL recovery…");
-
+    console.log("Attempting CENTRAL recovery...");
     try {
         for (const movie of recoveryQueue) {
             await centralDB.query(
-                `REPLACE INTO ${tableCentral} VALUES (?, ?, ?, ?, ?, ?)`,
+                `REPLACE INTO ${tableCentral}
+                (tconst, titleType, primaryTitle, isAdult, startYear, genres)
+                VALUES (?, ?, ?, ?, ?, ?)`,
                 [
-                    movie.tconst,
-                    movie.titleType,
-                    movie.primaryTitle,
-                    movie.isAdult,
-                    movie.startYear,
-                    movie.genres
+                    movie.tconst, movie.titleType, movie.primaryTitle,
+                    movie.isAdult, movie.startYear, movie.genres
                 ]
             );
         }
-
-        console.log("CENTRAL RECOVERY SUCCESS");
+        console.log("Recovery success!");
         recoveryQueue = [];
-
-    } catch (err) {
-        console.log("CENTRAL still down… retrying later");
+    } catch {
+        console.log("Central still down... retry later.");
     }
+
 }, 5000);
 
 // =========================
@@ -169,7 +166,7 @@ app.put("/api/movies/:tconst", async (req, res) => {
 // DELETE
 app.delete("/api/movies/:tconst", async (req, res) => {
     await centralDB.query(`DELETE FROM ${tableCentral} WHERE tconst=?`, [req.params.tconst]);
-    await f1DB.query(`DELETE FROM ${tableF1} WHERE tconst=?`, [req.params.tconst]);
+    await localDB.query(`DELETE FROM ${tableLocal} WHERE tconst=?`, [req.params.tconst]);
     await f2DB.query(`DELETE FROM ${tableF2} WHERE tconst=?`, [req.params.tconst]);
     res.json({ message: "Movie deleted across all nodes" });
 });
@@ -209,5 +206,5 @@ app.get("/reports/adult-count", async (req, res) => {
     res.json(rows[0]);
 });
 
-// Start server
-app.listen(3000, () => console.log("CENTRAL backend running on port 3000"));
+// START
+app.listen(3000, () => console.log("NODE 1 backend running on port 3000"));
