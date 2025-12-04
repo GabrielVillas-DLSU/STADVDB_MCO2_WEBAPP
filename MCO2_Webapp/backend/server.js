@@ -4,7 +4,10 @@
 const express = require("express");
 const app = express();
 const cors = require("cors");
-app.use(cors());
+app.use(cors({
+    origin: "*",   // allow ALL servers to call each other
+    methods: ["GET", "POST", "PUT", "DELETE"]
+}));
 app.use(express.json());
 
 const mysql = require("mysql2/promise");
@@ -130,6 +133,10 @@ setInterval(async () => {
 // =========================
 // API ROUTES
 // =========================
+
+app.get("/api/health", (req, res) => {
+    res.json({ status: "OK" });
+});
 
 // GET ALL MOVIES
 app.get("/api/movies", async (req, res) => {
