@@ -197,13 +197,13 @@ async function searchMovies(event) {
 async function loadTopGenres() {
     await waitForAPI();
 
-    const res = await fetch(`${ACTIVE_API}/reports/top-genres`);
+    const res = await fetch(`${ACTIVE_API}/api/reports/top-genres`);
     const data = await res.json();
 
     const list = document.getElementById("topGenres");
     list.innerHTML = "";
 
-    data.forEach(g => list.innerHTML += `<li>${g.genres}: ${g.count}</li>`);
+    data.forEach(g => list.innerHTML += `<li>${g.genres}: ${g.cnt}</li>`);
 }
 
 //--------------------------------------------------
@@ -212,7 +212,7 @@ async function loadTopGenres() {
 async function loadMostTitlesYear() {
     await waitForAPI();
 
-    const res = await fetch(`${ACTIVE_API}/reports/most-titles-year`);
+    const res = await fetch(`${ACTIVE_API}/api/reports/most-titles-year`);
     const data = await res.json();
 
     document.getElementById("mostTitlesYear").innerText =
@@ -225,7 +225,7 @@ async function loadMostTitlesYear() {
 async function loadAdultStats() {
     await waitForAPI();
 
-    const res = await fetch(`${ACTIVE_API}/reports/adult-count`);
+    const res = await fetch(`${ACTIVE_API}/api/reports/adult-count`);
     const data = await res.json();
 
     document.getElementById("adultCount").innerText =
