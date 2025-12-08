@@ -82,15 +82,16 @@ let recoveryQueue = [];
 async function replicateInsertOrUpdate(movie) {
   const values = [
     movie.tconst,
-    movie.titleType || null,
-    movie.primaryTitle || null,
-    movie.originalTitle || null,
-    movie.isAdult == null ? 0 : movie.isAdult,
-    movie.startYear == null ? null : movie.startYear,
-    movie.endYear == null ? null : movie.endYear,
-    movie.runtimeMinutes == null ? null : movie.runtimeMinutes,
-    movie.genres || null
+    movie.titleType || "movie",
+    movie.primaryTitle || "Untitled",
+    movie.originalTitle || movie.primaryTitle || "Untitled",
+    movie.isAdult ? 1 : 0,
+    movie.startYear || new Date().getFullYear(),
+    movie.endYear || null,
+    movie.runtimeMinutes || 0,
+    movie.genres || "Unknown"
   ];
+
 
   // 1) Try central first (required)
   try {
