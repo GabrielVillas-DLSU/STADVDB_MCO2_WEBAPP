@@ -161,12 +161,24 @@ app.get("/api/movies", async (req, res) => {
 // SEARCH (prepared)
 app.get("/api/movies/search", async (req, res) => {
   try {
-    const q = req.query.q || "";
-    const term = `%${q}%`;
-    const [rows] = await queryFailover(
-      `SELECT * FROM ${tableCentral} WHERE primaryTitle LIKE ? LIMIT 200`,
-      [term]
-    );
+    let q = req.query.q;
+
+    let sql;
+    let params;
+
+    if (q.startsWith("tt")) {
+        // Search by primary key ID
+        sql = `SELECT * FROM ${tableCentral} WHERE tconst = ? LIMIT 1`;
+        params = [q];
+      } else {
+        // Search by title
+        sql = `SELECT * FROM ${tableCentral} WHERE primaryTitle LIKE ? LIMIT 200`;
+        params = ["%" + q + "%"];
+      }
+
+const [rows] = await queryFailover(sql, params);
+res.json(rows);
+
     res.json(rows);
   } catch (err) {
     console.error("GET /api/movies/search error:", err.message);
