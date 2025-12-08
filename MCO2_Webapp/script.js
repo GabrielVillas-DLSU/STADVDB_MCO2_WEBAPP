@@ -140,22 +140,28 @@ function goUpdate(tconst) {
 // LOAD UPDATE FORM
 //--------------------------------------------------
 async function loadUpdateForm() {
-    await waitForAPI();
-
     const tconst = localStorage.getItem("updateTconst");
     if (!tconst) return;
 
-    const res = await fetch(`${ACTIVE_API}/movies/search?q=${tconst}`);
+    const res = await fetch(`${API}/movies/search?q=${tconst}`);
     const data = await res.json();
-    const m = data[0];
+
+    if (!data || data.length === 0) {
+        alert("Movie not found!");
+        return;
+    }
+
+    const m = data[0];  // now safe
 
     document.getElementById("Updatetype").value = m.titleType;
     document.getElementById("Updatetitle").value = m.primaryTitle;
     document.getElementById("Updateyear").value = m.startYear;
-    document.getElementById("Updatedirector").value = m.director || "";
+    document.getElementById("Updatedirector").value = m.originalTitle || "";
     document.getElementById("Genre").value = m.genres;
 
-    document.querySelector(`input[name=UpdateisAdult][value=${m.isAdult ? "yes" : "no"}]`).checked = true;
+    document.querySelector(
+        `input[name=UpdateisAdult][value=${m.isAdult ? "yes" : "no"}]`
+    ).checked = true;
 }
 
 //--------------------------------------------------
