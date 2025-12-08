@@ -75,19 +75,37 @@ async function addMovie(event) {
     event.preventDefault();
     await waitForAPI();
 
+    const typeEl   = document.getElementById("type");
+    const titleEl  = document.getElementById("title");
+    const yearEl   = document.getElementById("year");
+    const genreEl  = document.getElementById("Genre");
+    const adultEl  = document.querySelector("input[name=isAdult]:checked");
+
+    // Basic safety check so we don't crash on null
+    if (!typeEl || !titleEl || !yearEl || !genreEl || !adultEl) {
+        alert("Add Movie form is not correctly loaded on this page.");
+        return;
+    }
+
+    const isAdult = adultEl.value === "yes" ? 1 : 0;
+
     const body = {
-        tconst: "tt" + Math.floor(Math.random()*99999999),
-        type: document.getElementById("type").value,
-        title: document.getElementById("title").value,
-        year: parseInt(document.getElementById("year").value),
-        director: document.getElementById("director").value,
-        isAdult: document.querySelector("input[name=isAdult]:checked").value,
-        genre: document.getElementById("Genre").value
+        tconst: "tt" + Math.floor(Math.random() * 99999999),
+
+        // match backend expectations
+        titleType: typeEl.value,
+        primaryTitle: titleEl.value,
+        originalTitle: titleEl.value,   // you don't collect this separately
+        startYear: parseInt(yearEl.value),
+        endYear: null,
+        runtimeMinutes: 0,
+        isAdult: isAdult,
+        genres: genreEl.value
     };
 
     await fetch(`${ACTIVE_API}/movies`, {
         method: "POST",
-        headers: { "Content-Type":"application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
     });
 
