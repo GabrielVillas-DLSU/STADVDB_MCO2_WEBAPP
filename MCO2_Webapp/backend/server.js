@@ -1,5 +1,4 @@
 // server.js - CENTRAL NODE (Server0)
-// Fully corrected version
 
 const express = require("express");
 const app = express();
@@ -71,6 +70,7 @@ async function queryFailover(sql, params = []) {
 const colList = `(tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, endYear, runtimeMinutes, genres)`;
 const centralReplaceSql = `REPLACE INTO ${tableCentral} ${colList} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
+let recoveryQueue = [];
 /**
  * movie object keys expected:
  *  tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, endYear, runtimeMinutes, genres
@@ -89,8 +89,17 @@ async function replicateInsertOrUpdate(movie) {
   ];
 
   // 1) CENTRAL MUST SUCCEED
-  await centralDB.query(centralReplaceSql, values);
-  console.log("Central write OK");
+try {
+    await centralDB.query(centralReplaceSql, values);
+    console.log("Central write OK");
+} catch (err) {
+    console.log("CENTRAL DOWN – queued:", movie.tconst);
+    recoveryQueue.push({
+        sql: centralReplaceSql,
+        values
+    });
+}
+
 
   // 2) FRAGMENT BEST-EFFORT
   try {
@@ -278,6 +287,39 @@ app.get("/api/reports/adult-count", async (req, res) => {
     res.status(500).json({ error: "Unable to fetch adult counts." });
   }
 });
+
+// =====================
+// PERIODIC RECOVERY RETRY
+// =====================
+setInterval(async () => {
+    if (recoveryQueue.length === 0) return;
+
+    console.log("Attempting CENTRAL recovery… queue length:", recoveryQueue.length);
+
+    // take a snapshot
+    const pending = [...recoveryQueue];
+    let recovered = [];
+
+    for (const task of pending) {
+        try {
+            await centralDB.query(task.sql, task.values);
+            console.log("Recovered:", task.values[0]);
+            recovered.push(task);
+        } catch (err) {
+            console.log("Still down:", err.message);
+            break;  // stop early if central is still failing
+        }
+    }
+
+    // remove only those that succeeded
+    recoveryQueue = recoveryQueue.filter(q => !recovered.includes(q));
+
+    if (recoveryQueue.length === 0) {
+        console.log("✔ ALL RECOVERED");
+    }
+
+}, 5000);
+
 
 // -----------------------------
 // Start server
