@@ -93,32 +93,40 @@ async function replicateInsertOrUpdate(movie) {
   ];
 
 
-  // 1) Try central first (required)
-  try {
-    await centralDB.query(centralReplaceSql, values);
-  } catch (err) {
-    console.error("❌ CENTRAL NODE FAILED — queueing for recovery", err.message);
-    // queue the SQL and params for later replay
-    recoveryQueue.push({ sql: centralReplaceSql, params: values });
-    // throw to inform caller that central is down (so they can get an error)
-    throw new Error("Central node unavailable - write queued for recovery.");
-  }
-
-  // 2) Write to fragment (best-effort)
-  try {
-    if (movie.startYear != null && movie.startYear <= 2010) {
-      await f1DB.query(`REPLACE INTO ${tableF1} ${colList} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, values);
-    } else {
-      await f2DB.query(`REPLACE INTO ${tableF2} ${colList} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, values);
+  // Central node (always try first)
+    try {
+        await centralDB.query(`
+            REPLACE INTO dim_title
+            (tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, endYear, runtimeMinutes, genres)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, values);
+        console.log("Central write OK");
+    } catch (err) {
+        console.log("CENTRAL DOWN – queued:", movie.tconst);
+        recoveryQueue.push(movie);
     }
-  } catch (fragErr) {
-    console.warn("⚠ Fragment write failed (but central succeeded):", fragErr.message);
-    // do not rethrow; central succeeded so operation is considered successful
+
+    // Write to correct fragment
+    try {
+        if (movie.startYear <= 2010) {
+            await f1DB.query(`
+                REPLACE INTO dim_title_f1
+                (tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, endYear, runtimeMinutes, genres)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, values);
+            console.log("Fragment F1 write OK");
+        } else {
+            await f2DB.query(`
+                REPLACE INTO dim_title_f2
+                (tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, endYear, runtimeMinutes, genres)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, values);
+            console.log("Fragment F2 write OK");
+        }
+    } catch (err) {
+        console.log("❌ Fragment write failed:", err.message);
+    }
   }
-
-  return { success: true };
-}
-
 // periodic attempt to flush recoveryQueue back to central
 setInterval(async () => {
   if (recoveryQueue.length === 0) return;
@@ -160,29 +168,23 @@ app.get("/api/movies", async (req, res) => {
 
 // SEARCH (prepared)
 app.get("/api/movies/search", async (req, res) => {
-  try {
-    let q = req.query.q;
+    const term = "%" + req.query.q + "%";
 
-    let sql;
-    let params;
+    try {
+        const [rows] = await queryFailover(
+            `SELECT * FROM ${tableCentral} WHERE primaryTitle LIKE ? LIMIT 200`,
+            [term]
+        );
 
-    if (q.startsWith("tt")) {
-        // Search by primary key ID
-        sql = `SELECT * FROM ${tableCentral} WHERE tconst = ? LIMIT 1`;
-        params = [q];
-      } else {
-        // Search by title
-        sql = `SELECT * FROM ${tableCentral} WHERE primaryTitle LIKE ? LIMIT 200`;
-        params = ["%" + q + "%"];
-      }
+        return res.json(rows);
 
-    const [rows] = await queryFailover(sql, params);
-    res.json(rows);
-  } catch (err) {
-    console.error("GET /api/movies/search error:", err.message);
-    res.status(500).json({ error: "Search failed." });
-  }
+    } catch (err) {
+        console.log("SEARCH ERROR:", err.message);
+        // Return only once
+        return res.status(500).json({ error: "Search failed", detail: err.message });
+    }
 });
+
 
 // ADD
 app.post("/api/movies", async (req, res) => {
