@@ -1,4 +1,4 @@
-// server.js - SERVER 2
+// server2.js - SERVER 2 (same logic as Server0)
 
 const express = require("express");
 const app = express();
@@ -12,7 +12,7 @@ const mysql = require("mysql2/promise");
 // DATABASE POOLS
 // -----------------------------
 const centralDB = mysql.createPool({
-  host: "10.2.14.81", // CENTRAL stays same
+  host: "10.2.14.81",   // CENTRAL NODE
   port: 3306,
   user: "root",
   password: "",
@@ -22,7 +22,7 @@ const centralDB = mysql.createPool({
 });
 
 const f1DB = mysql.createPool({
-  host: "10.2.14.82", // Fragment F1 (Server1)
+  host: "10.2.14.82",   // FRAGMENT 1 (Server1)
   port: 3306,
   user: "root",
   password: "",
@@ -32,7 +32,7 @@ const f1DB = mysql.createPool({
 });
 
 const f2DB = mysql.createPool({
-  host: "10.2.14.83", // THIS IS SERVER2
+  host: "10.2.14.83",   // FRAGMENT 2 (THIS SERVER)
   port: 3306,
   user: "root",
   password: "",
@@ -46,24 +46,24 @@ const tableF1 = "dim_title_f1";
 const tableF2 = "dim_title_f2";
 
 // -----------------------------
-// Helper: failover read
+// FAILOVER READ
 // -----------------------------
 async function queryFailover(sql, params = []) {
   try {
     return await centralDB.query(sql, params);
   } catch (e1) {
-    console.warn("CENTRAL DOWN → trying F1", e1.message);
+    console.warn("CENTRAL DOWN → trying F1");
     try {
       return await f1DB.query(sql, params);
     } catch (e2) {
-      console.warn("F1 DOWN → trying F2", e2.message);
+      console.warn("F1 DOWN → trying F2");
       return await f2DB.query(sql, params);
     }
   }
 }
 
 // -----------------------------
-// Replication
+// REPLICATION + RECOVERY
 // -----------------------------
 const colList = `(tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, endYear, runtimeMinutes, genres)`;
 const centralReplaceSql = `REPLACE INTO ${tableCentral} ${colList} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
@@ -83,16 +83,19 @@ async function replicateInsertOrUpdate(movie) {
     movie.genres
   ];
 
-  // central write first
+  // WRITE TO CENTRAL
   try {
     await centralDB.query(centralReplaceSql, values);
     console.log("Central write OK");
   } catch (err) {
     console.log("CENTRAL DOWN – queued:", movie.tconst);
-    recoveryQueue.push({ sql: centralReplaceSql, values });
+    recoveryQueue.push({
+      sql: centralReplaceSql,
+      values
+    });
   }
 
-  // fragment write
+  // WRITE TO FRAGMENT
   try {
     if (movie.startYear <= 2010) {
       await f1DB.query(
@@ -113,7 +116,7 @@ async function replicateInsertOrUpdate(movie) {
 }
 
 // -----------------------------
-// Routes
+// API ROUTES
 // -----------------------------
 app.get("/api/health", (req, res) => res.json({ status: "OK" }));
 
@@ -128,88 +131,119 @@ app.get("/api/movies", async (req, res) => {
 
 app.get("/api/movies/search", async (req, res) => {
   const term = "%" + req.query.q + "%";
-  const [rows] = await queryFailover(
-    `SELECT * FROM ${tableCentral} WHERE primaryTitle LIKE ? LIMIT 200`,
-    [term]
-  );
-  res.json(rows);
+
+  try {
+    const [rows] = await queryFailover(
+      `SELECT * FROM ${tableCentral} WHERE primaryTitle LIKE ? LIMIT 200`,
+      [term]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "Search failed" });
+  }
 });
 
 app.post("/api/movies", async (req, res) => {
-  const { tconst, type, title, year, isAdult, genre } = req.body;
+  try {
+    const { tconst, type, title, year, isAdult, genre } = req.body;
 
-  const movie = {
-    tconst,
-    titleType: type,
-    primaryTitle: title,
-    originalTitle: title,
-    isAdult: isAdult === "yes" ? 1 : 0,
-    startYear: parseInt(year),
-    endYear: null,
-    runtimeMinutes: 0,
-    genres: genre
-  };
+    const movie = {
+      tconst,
+      titleType: type,
+      primaryTitle: title,
+      originalTitle: title,
+      isAdult: isAdult === "yes" ? 1 : 0,
+      startYear: parseInt(year),
+      endYear: null,
+      runtimeMinutes: 0,
+      genres: genre
+    };
 
-  await replicateInsertOrUpdate(movie);
-  res.json({ message: "Movie added (replicated)", movie });
+    await replicateInsertOrUpdate(movie);
+    res.json({ message: "Movie added (replicated)", movie });
+  } catch (err) {
+    res.status(500).json({ error: "Add failed", detail: err.message });
+  }
 });
 
 app.put("/api/movies/:tconst", async (req, res) => {
-  const tconst = req.params.tconst;
-  const { type, title, year, isAdult, genre } = req.body;
+  try {
+    const tconst = req.params.tconst;
+    const { type, title, year, isAdult, genre } = req.body;
 
-  const movie = {
-    tconst,
-    titleType: type,
-    primaryTitle: title,
-    originalTitle: title,
-    isAdult: isAdult === "yes" ? 1 : 0,
-    startYear: parseInt(year),
-    endYear: null,
-    runtimeMinutes: 0,
-    genres: genre
-  };
+    const movie = {
+      tconst,
+      titleType: type,
+      primaryTitle: title,
+      originalTitle: title,
+      isAdult: isAdult === "yes" ? 1 : 0,
+      startYear: parseInt(year),
+      endYear: null,
+      runtimeMinutes: 0,
+      genres: genre
+    };
 
-  await replicateInsertOrUpdate(movie);
-  res.json({ message: "Movie updated (replicated)", movie });
+    await replicateInsertOrUpdate(movie);
+    res.json({ message: "Movie updated (replicated)", movie });
+  } catch (err) {
+    res.status(500).json({ error: "Update failed", detail: err.message });
+  }
 });
 
 app.delete("/api/movies/:tconst", async (req, res) => {
   const id = req.params.tconst;
-  await centralDB.query(`DELETE FROM ${tableCentral} WHERE tconst = ?`, [id]);
-  await f1DB.query(`DELETE FROM ${tableF1} WHERE tconst = ?`, [id]);
-  await f2DB.query(`DELETE FROM ${tableF2} WHERE tconst = ?`, [id]);
-  res.json({ message: "Movie deleted across nodes" });
+
+  try {
+    await centralDB.query(`DELETE FROM ${tableCentral} WHERE tconst = ?`, [id]);
+  } catch (err) {
+    console.warn("Central delete failed:", err.message);
+  }
+
+  try {
+    await f1DB.query(`DELETE FROM ${tableF1} WHERE tconst = ?`, [id]);
+  } catch (err) {
+    console.warn("F1 delete failed:", err.message);
+  }
+
+  try {
+    await f2DB.query(`DELETE FROM ${tableF2} WHERE tconst = ?`, [id]);
+  } catch (err) {
+    console.warn("F2 delete failed:", err.message);
+  }
+
+  res.json({ message: "Movie delete attempt finished" });
 });
 
 // -----------------------------
-// Recovery
+// RECOVERY QUEUE
 // -----------------------------
 setInterval(async () => {
   if (recoveryQueue.length === 0) return;
 
-  console.log("Recovery attempt…");
+  console.log("Attempting CENTRAL recovery… pending:", recoveryQueue.length);
+
   const pending = [...recoveryQueue];
+  let recovered = [];
 
   for (const task of pending) {
     try {
       await centralDB.query(task.sql, task.values);
-      recoveryQueue = recoveryQueue.filter(q => q !== task);
       console.log("Recovered:", task.values[0]);
+      recovered.push(task);
     } catch (err) {
       console.log("Still down:", err.message);
       break;
     }
   }
+
+  recoveryQueue = recoveryQueue.filter(q => !recovered.includes(q));
+
 }, 5000);
 
 // -----------------------------
-// Start Server
-// -----------------------------
-app.listen(3000, () =>
-  console.log("SERVER2 backend running on port 3000")
-);
+const PORT = 3000;
+app.listen(PORT, () => console.log(`SERVER 2 backend running on port ${PORT}`));
 
 process.on("unhandledRejection", (reason) => {
-  console.error("Unhandled Rejection:", reason?.stack || reason);
+  console.error("Unhandled Rejection:", reason);
 });
