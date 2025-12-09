@@ -143,7 +143,7 @@ async function loadUpdateForm() {
     const tconst = localStorage.getItem("updateTconst");
     if (!tconst) return;
 
-    const res = await fetch(`${API}/movies/search?q=${tconst}`);
+    const res = await fetch(`${ACTIVE_API}/movies/search?q=${tconst}`);
     const data = await res.json();
 
     if (!data || data.length === 0) {
