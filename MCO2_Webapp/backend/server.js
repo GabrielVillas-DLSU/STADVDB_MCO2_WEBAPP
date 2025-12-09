@@ -1,4 +1,4 @@
-// server.js - SERVER 1
+// server.js - SERVER 2
 
 const express = require("express");
 const app = express();
@@ -12,7 +12,7 @@ const mysql = require("mysql2/promise");
 // DATABASE POOLS
 // -----------------------------
 const centralDB = mysql.createPool({
-  host: "10.2.14.81", // SAME CENTRAL
+  host: "10.2.14.81", // CENTRAL stays same
   port: 3306,
   user: "root",
   password: "",
@@ -22,7 +22,7 @@ const centralDB = mysql.createPool({
 });
 
 const f1DB = mysql.createPool({
-  host: "10.2.14.82", // THIS IS SERVER1
+  host: "10.2.14.82", // Fragment F1 (Server1)
   port: 3306,
   user: "root",
   password: "",
@@ -32,7 +32,7 @@ const f1DB = mysql.createPool({
 });
 
 const f2DB = mysql.createPool({
-  host: "10.2.14.83",
+  host: "10.2.14.83", // THIS IS SERVER2
   port: 3306,
   user: "root",
   password: "",
@@ -52,18 +52,18 @@ async function queryFailover(sql, params = []) {
   try {
     return await centralDB.query(sql, params);
   } catch (e1) {
-    console.warn("CENTRAL DOWN → trying F1");
+    console.warn("CENTRAL DOWN → trying F1", e1.message);
     try {
       return await f1DB.query(sql, params);
     } catch (e2) {
-      console.warn("F1 DOWN → trying F2");
+      console.warn("F1 DOWN → trying F2", e2.message);
       return await f2DB.query(sql, params);
     }
   }
 }
 
 // -----------------------------
-// Replication (same as server0)
+// Replication
 // -----------------------------
 const colList = `(tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, endYear, runtimeMinutes, genres)`;
 const centralReplaceSql = `REPLACE INTO ${tableCentral} ${colList} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
@@ -83,7 +83,7 @@ async function replicateInsertOrUpdate(movie) {
     movie.genres
   ];
 
-  // CENTRAL write
+  // central write first
   try {
     await centralDB.query(centralReplaceSql, values);
     console.log("Central write OK");
@@ -92,7 +92,7 @@ async function replicateInsertOrUpdate(movie) {
     recoveryQueue.push({ sql: centralReplaceSql, values });
   }
 
-  // FRAGMENT write
+  // fragment write
   try {
     if (movie.startYear <= 2010) {
       await f1DB.query(
@@ -113,7 +113,7 @@ async function replicateInsertOrUpdate(movie) {
 }
 
 // -----------------------------
-// Routes (copied exactly from server0)
+// Routes
 // -----------------------------
 app.get("/api/health", (req, res) => res.json({ status: "OK" }));
 
@@ -137,6 +137,7 @@ app.get("/api/movies/search", async (req, res) => {
 
 app.post("/api/movies", async (req, res) => {
   const { tconst, type, title, year, isAdult, genre } = req.body;
+
   const movie = {
     tconst,
     titleType: type,
@@ -182,24 +183,33 @@ app.delete("/api/movies/:tconst", async (req, res) => {
 });
 
 // -----------------------------
-// Recovery timer
+// Recovery
 // -----------------------------
 setInterval(async () => {
   if (recoveryQueue.length === 0) return;
+
   console.log("Recovery attempt…");
   const pending = [...recoveryQueue];
+
   for (const task of pending) {
     try {
       await centralDB.query(task.sql, task.values);
       recoveryQueue = recoveryQueue.filter(q => q !== task);
       console.log("Recovered:", task.values[0]);
     } catch (err) {
+      console.log("Still down:", err.message);
       break;
     }
   }
 }, 5000);
 
 // -----------------------------
+// Start Server
+// -----------------------------
 app.listen(3000, () =>
-  console.log("SERVER1 backend running on port 3000")
+  console.log("SERVER2 backend running on port 3000")
 );
+
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled Rejection:", reason?.stack || reason);
+});
