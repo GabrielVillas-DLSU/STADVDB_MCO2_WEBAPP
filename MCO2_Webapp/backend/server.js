@@ -1,4 +1,4 @@
-// server1.js - Fragment Node (Server1)
+// server2.js - Fragment Node (Server2)
 
 const express = require("express");
 const app = express();
@@ -19,7 +19,7 @@ const centralDB = mysql.createPool({
   database: "imdb_title_basics"
 });
 
-const localDB = mysql.createPool({
+const otherDB = mysql.createPool({
   host: "10.2.14.82",
   port: 3306,
   user: "root",
@@ -27,7 +27,7 @@ const localDB = mysql.createPool({
   database: "imdb_title_f1"
 });
 
-const otherDB = mysql.createPool({
+const localDB = mysql.createPool({
   host: "10.2.14.83",
   port: 3306,
   user: "root",
@@ -36,8 +36,8 @@ const otherDB = mysql.createPool({
 });
 
 const tableCentral = "dim_title";
-const tableLocal = "dim_title_f1";
-const tableOther = "dim_title_f2";
+const tableLocal = "dim_title_f2";
+const tableOther = "dim_title_f1";
 
 // =============================
 // FAILOVER READ
@@ -46,12 +46,12 @@ async function queryFailover(sql, params = []) {
   try {
     return await centralDB.query(sql, params);
   } catch (e1) {
-    console.warn("CENTRAL DOWN → trying LOCAL", e1.message);
+    console.warn("CENTRAL DOWN → trying OTHER", e1.message);
     try {
-      return await localDB.query(sql, params);
-    } catch (e2) {
-      console.warn("LOCAL DOWN → trying OTHER", e2.message);
       return await otherDB.query(sql, params);
+    } catch (e2) {
+      console.warn("OTHER DOWN → trying LOCAL", e2.message);
+      return await localDB.query(sql, params);
     }
   }
 }
@@ -60,7 +60,6 @@ async function queryFailover(sql, params = []) {
 // REPLICATION + RECOVERY
 // =============================
 let recoveryQueue = [];
-
 const colList = `(tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, endYear, runtimeMinutes, genres)`;
 
 async function replicateInsertOrUpdate(movie) {
@@ -76,27 +75,22 @@ async function replicateInsertOrUpdate(movie) {
     movie.genres
   ];
 
-  // -----------------------------------
-  // WRITE TO CENTRAL (always first)
-  // -----------------------------------
+  // WRITE TO CENTRAL
   try {
     await centralDB.query(
       `REPLACE INTO ${tableCentral} ${colList} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       values
     );
   } catch (err) {
-    console.log("CENTRAL DOWN → queued:", movie.tconst);
     recoveryQueue.push({
       sql: `REPLACE INTO ${tableCentral} ${colList} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       values
     });
   }
 
-  // -----------------------------------
-  // WRITE TO LOCAL FRAGMENT (this node)
-  // -----------------------------------
+  // WRITE TO LOCAL (only > 2010)
   try {
-    if (movie.startYear <= 2010) {
+    if (movie.startYear > 2010) {
       await localDB.query(
         `REPLACE INTO ${tableLocal} ${colList} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         values
@@ -107,12 +101,9 @@ async function replicateInsertOrUpdate(movie) {
   }
 }
 
-// =============================
-// RECOVERY TASK
-// =============================
+// RECOVERY
 setInterval(async () => {
   if (recoveryQueue.length === 0) return;
-
   const pending = [...recoveryQueue];
   let success = [];
 
@@ -120,7 +111,7 @@ setInterval(async () => {
     try {
       await centralDB.query(task.sql, task.values);
       success.push(task);
-    } catch (err) {
+    } catch {
       break;
     }
   }
@@ -161,4 +152,4 @@ app.put("/api/movies/:tconst", async (req, res) => {
 // =============================
 // START SERVER
 // =============================
-app.listen(3000, () => console.log("FRAGMENT Server1 running on port 3000"));
+app.listen(3000, () => console.log("FRAGMENT Server2 running on port 3000"));
